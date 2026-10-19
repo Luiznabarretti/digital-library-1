@@ -66,21 +66,34 @@ public class AuthController {
     @PostMapping("/register")
     public String registerUser(@RequestParam("name") String name,
                                @RequestParam("email") String email,
+                               @RequestParam(value = "phone", required = false) String phone,
                                @RequestParam("password") String password,
-                               @RequestParam(value = "acceptTerms", defaultValue = "false") boolean acceptTerms,
+                               @RequestParam(value = "termsAccepted", required = false, defaultValue = "false") boolean termsAccepted,
+                               @RequestParam(value = "acceptTerms", required = false, defaultValue = "false") boolean acceptTerms,
                                HttpServletRequest request,
                                Model model) {
+
+        boolean accepted = termsAccepted || acceptTerms;
+        if (!accepted) {
+            model.addAttribute("error", "É obrigatório aceitar os termos de privacidade (LGPD) para criar a conta.");
+            return "auth/register";
+        }
+
         if (password == null || password.length() < 8) {
             model.addAttribute("error", "A senha deve conter no mínimo 8 caracteres.");
             return "auth/register";
         }
-        if (!acceptTerms) {
-            model.addAttribute("error", "É necessário aceitar os termos de uso e a política de privacidade.");
-            return "auth/register";
-        }
+
         if (userRepository.findByEmail(email).isPresent()) {
             model.addAttribute("error", "Este e-mail já está cadastrado no sistema.");
             return "auth/register";
+        }
+
+        String clientIp = request.getHeader("X-Forwarded-For");
+        if (clientIp == null || clientIp.isBlank() || "unknown".equalsIgnoreCase(clientIp)) {
+            clientIp = request.getRemoteAddr();
+        } else if (clientIp.contains(",")) {
+            clientIp = clientIp.split(",")[0].trim();
         }
 
         try {
@@ -92,11 +105,20 @@ public class AuthController {
             UserService.RegistrationResult result = userService.registerUser(
                     registerRequest,
                     name,
-                    request.getRemoteAddr(),
+                    clientIp,
                     request.getHeader("User-Agent")
             );
 
-            // Sempre o plaintext capturado no cadastro — nunca o valor cifrado do banco
+            User user = result.user();
+            if (phone != null && !phone.isBlank()) {
+                user.setPhone(phone);
+            }
+            user.setTermsAccepted(true);
+            user.setTermsAcceptedAt(Instant.now());
+            user.setTermsVersion("v1.0-2026");
+            user.setConsentIp(clientIp);
+            userRepository.save(user);
+
             String totpPlain = result.totpSecretPlaintext();
             String qr = twoFactorService.generateQrCodeDataUrl(totpPlain, result.user().getEmail());
             model.addAttribute("qrCode", qr);
@@ -170,9 +192,6 @@ public class AuthController {
         }
     }
 
-    /**
-     * Etapa 2FA via TOTP (authenticator).
-     */
     @GetMapping("/login-2fa")
     public String twoFactorPage(Authentication authentication, Model model) {
         if (authentication == null) {
