@@ -13,13 +13,13 @@ jobs:
   bearer:
     name: Privacidade e LGPD (Bearer)
     runs-on: ubuntu-latest
-    continue-on-error: true # <-- ADICIONADO: Mantém o job verde mesmo achando vulnerabilidades
+    continue-on-error: true 
     steps:
       - name: Checkout do código
         uses: actions/checkout@v4
       
       - name: Rodar Bearer Scan
-        uses: bearer/bearer-action@v3
+        uses: bearer/bearer-action@v2 # <-- CORRIGIDO PARA v2
         with:
           diff: false
 
@@ -29,19 +29,19 @@ jobs:
   trivy-sbom:
     name: Gerar SBOM (Trivy)
     runs-on: ubuntu-latest
-    continue-on-error: true # <-- ADICIONADO: Impede bloqueio do job
+    continue-on-error: true 
     steps:
       - name: Checkout do código
         uses: actions/checkout@v4
       
-      - name: Gerar Software Bill of Materials (SBOM) no formato CycloneDX
-        uses: aquasecurity/trivy-action@0.28.0 # <-- ATUALIZADO: Versão fixa mais estável que a master
+      - name: Gerar SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@master # <-- CORRIGIDO PARA master
         with:
           scan-type: 'fs'
           format: 'cyclonedx'
           output: 'sbom-cyclonedx.json'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # <-- ADICIONADO: Evita erro de limite de downloads da base de dados
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Disponibilizar Artefato JSON
         uses: actions/upload-artifact@v4
@@ -97,4 +97,4 @@ jobs:
         uses: zaproxy/action-baseline@v0.12.0
         with:
           target: 'http://localhost:8080/'
-          fail_action: false # <-- ATUALIZADO: Ficará verde mesmo se o ZAP achar falhas de segurança
+          fail_action: false
