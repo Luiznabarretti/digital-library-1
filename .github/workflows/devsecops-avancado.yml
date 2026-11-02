@@ -1,0 +1,100 @@
+name: DevSecOps Avancado - DAST, Privacidade e SBOM
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  # ---------------------------------------------------
+  # 1. SCANNER DE PRIVACIDADE E DADOS (BEARER)
+  # ---------------------------------------------------
+  bearer:
+    name: Privacidade e LGPD (Bearer)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+      
+      - name: Rodar Bearer Scan
+        uses: bearer/bearer-action@v3
+        with:
+          diff: false
+          # O Bearer automaticamente retorna exit-code 1 (bloqueando o build) se encontrar vazamentos críticos
+
+  # ---------------------------------------------------
+  # 2. SUPPLY CHAIN SECURITY (TRIVY SBOM)
+  # ---------------------------------------------------
+  trivy-sbom:
+    name: Gerar SBOM (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+      
+      - name: Gerar Software Bill of Materials (SBOM) no formato CycloneDX
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          format: 'cyclonedx'
+          output: 'sbom-cyclonedx.json'
+          
+      - name: Disponibilizar Artefato JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-artifact
+          path: sbom-cyclonedx.json
+
+  # ---------------------------------------------------
+  # 3. DAST (OWASP ZAP) COM APLICAÇÃO EM EXECUÇÃO
+  # ---------------------------------------------------
+  zap-dast:
+    name: DAST (OWASP ZAP)
+    runs-on: ubuntu-latest
+    # Cria um banco temporário no GitHub para a aplicação conseguir iniciar sem expor seu Supabase
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: root
+          POSTGRES_PASSWORD: root
+          POSTGRES_DB: demo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+        
+      - name: Configurar Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21' # Ajuste para '17' caso o seu pom.xml use Java 17
+          distribution: 'temurin'
+          
+      - name: Compilar a aplicação
+        run: mvn clean package -DskipTests
+        
+      - name: Subir a aplicação em Background (localhost)
+        env:
+          # Sobrescreve as variáveis do application.properties para rodar no runner
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/demo
+          SPRING_DATASOURCE_USERNAME: root
+          SPRING_DATASOURCE_PASSWORD: root
+          SPRING_MAIL_USERNAME: dummy
+          SPRING_MAIL_PASSWORD: dummy
+          # Desativa o HTTPS temporariamente apenas no runner para o ZAP conseguir analisar sem erro de certificado local
+          SERVER_SSL_ENABLED: false
+          SERVER_PORT: 8080
+        run: |
+          java -jar target/*.jar &
+          echo "Aguardando o Spring Boot subir completamente..."
+          sleep 45 
+          
+      - name: Rodar Varredura Dinâmica (OWASP ZAP Baseline)
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: 'http://localhost:8080/'
+          fail_action: true # Força o bloqueio (exit-code 1) se falhas críticas de DAST forem encontradas
