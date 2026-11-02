@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@v4
       
       - name: Rodar Bearer Scan
-        uses: bearer/bearer-action@v2 # <-- CORRIGIDO PARA v2
+        uses: bearer/bearer-action@v2
         with:
           diff: false
 
@@ -33,9 +33,21 @@ jobs:
     steps:
       - name: Checkout do código
         uses: actions/checkout@v4
+        
+      # --- CORREÇÃO 1: Prepara o cache para evitar o Erro 429 ---
+      - name: Configurar Java e Cache do Maven
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+          
+      - name: Baixar dependências offline
+        run: mvn dependency:go-offline
+      # ----------------------------------------------------------
       
       - name: Gerar SBOM (CycloneDX)
-        uses: aquasecurity/trivy-action@master # <-- CORRIGIDO PARA master
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
           format: 'cyclonedx'
@@ -70,6 +82,10 @@ jobs:
       - name: Checkout do código
         uses: actions/checkout@v4
         
+      # --- CORREÇÃO 2: Permissão de escrita para o relatório do ZAP ---
+      - name: Dar permissão na pasta para o ZAP
+        run: chmod 777 .
+        
       - name: Configurar Java
         uses: actions/setup-java@v4
         with:
@@ -79,6 +95,7 @@ jobs:
       - name: Compilar a aplicação
         run: mvn clean package -DskipTests
         
+      # --- CORREÇÃO 3: Força a desativação do HTTPS e loga a inicialização ---
       - name: Subir a aplicação em Background (localhost)
         env:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/demo
@@ -86,12 +103,12 @@ jobs:
           SPRING_DATASOURCE_PASSWORD: root
           SPRING_MAIL_USERNAME: dummy
           SPRING_MAIL_PASSWORD: dummy
-          SERVER_SSL_ENABLED: false
-          SERVER_PORT: 8080
+          SECURITY_ENCRYPTION_KEY_BASE64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
         run: |
-          java -jar target/*.jar &
-          echo "Aguardando o Spring Boot subir completamente..."
-          sleep 45 
+          java -jar target/*.jar --server.port=8080 --server.ssl.enabled=false > spring-boot.log 2>&1 &
+          echo "Aguardando o Spring Boot subir completamente (60 segundos)..."
+          sleep 60
+          cat spring-boot.log
           
       - name: Rodar Varredura Dinâmica (OWASP ZAP Baseline)
         uses: zaproxy/action-baseline@v0.12.0
